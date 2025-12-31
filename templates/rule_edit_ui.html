@@ -1,0 +1,877 @@
+{% extends 'base.html' %}
+{% block content %}
+<script src="/static/rule_edit_prepopulate.js"></script>
+<script src="/static/rule_edit.js"></script>
+{# JSON remains for backward-compat but no longer required #}
+<script id="rule-conditions" type="application/json">{{ conditions_json|safe }}</script>
+<script id="rule-actions" type="application/json">{{ actions_json|safe }}</script>
+<div class="sidebar">
+    <div class="sidebar-title">Automation</div>
+    <ul>
+        <li><span>⚡</span> <a href="/">Rules</a></li>
+    </ul>
+</div>
+<div class="main-content" style="max-width:1100px;margin-left:240px;padding:40px 32px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+        <h2 style="margin:0;">Edit rule</h2>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" class="cancel" onclick="window.location.href='/'" style="background:#393949;color:#b3c6f7;padding:6px 18px;border-radius:6px;font-size:1rem;border:none;">Cancel</button>
+            <button type="submit" form="editRuleForm" style="background:#8faaff;color:#23283a;padding:6px 18px;border-radius:6px;font-size:1rem;border:none;font-weight:600;">Save</button>
+        </div>
+    </div>
+    <form id="editRuleForm" class="edit-rule-form" style="background:#23283a;padding:32px 28px;border-radius:10px;box-shadow:0 2px 16px rgba(0,0,0,0.18);color:#fff;" action="{% if rule.id %}/rule/{{ rule.id }}/edit/{% else %}/rule/create/{% endif %}" method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <!-- Hidden fields to ensure action and email draft are submitted even without JS/AJAX -->
+        <input type="hidden" name="reply_message" id="hiddenReplyMessage">
+        <input type="hidden" name="action_type_0" id="hiddenActionType">
+        <input type="hidden" name="action_email_body_0" id="hiddenActionEmailBody">
+        {# Alternative to JSON: hidden initial condition inputs for JS to read #}
+        <div id="initialConditionsInputs" style="display:none;">
+            {% if conditions %}
+                {% for c in conditions %}
+                    <input type="hidden" name="initial_filter_field" value="{{ c.field }}">
+                    <input type="hidden" name="initial_filter_condition" value="{{ c.condition }}">
+                    <input type="hidden" name="initial_filter_value" value="{{ c.value }}">
+                    <input type="hidden" name="initial_and_or" value="{{ c.and_or|default:'AND' }}">
+                {% endfor %}
+            {% endif %}
+        </div>
+        <!-- ...existing form fields... -->
+        <label style="font-size:1.1rem;color:#f3f6fa;">Rule name</label>
+        <input type="text" name="rule_name" value="{{ rule.rule_name }}" required style="margin-bottom:18px;background:#181c24;color:#fff;border:1px solid #31374a;">
+        <div style="margin-bottom:18px;">
+            <div id="workspaceDisplay" style="white-space:nowrap;display:inline-block;font-size:1rem;color:#7eb6ff;margin-bottom:0;">
+                <span style="color:#b3c6f7;white-space:nowrap;">Associated workspace:</span>
+                <b id="workspaceLabel" style="color:#f3f6fa;white-space:nowrap;">{% if rule.workspace == 'current' %}Current workspace{% elif rule.workspace == 'all_inboxes' %}All shared inboxes{% elif rule.workspace == 'all_labels' %}All shared labels{% elif rule.workspace == 'all_workspaces' %}All workspaces{% else %}{{ rule.workspace }}{% endif %}</b>
+                <button type="button" id="editWorkspaceBtn" style="background:none;border:none;color:#7eb6ff;cursor:pointer;font-size:1.1em;margin-left:4px;vertical-align:middle;">✏️</button>
+            </div>
+            <div id="workspaceModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(24,28,36,0.7);z-index:2000;align-items:center;justify-content:center;">
+                <div style="background:#23283a;padding:32px 28px;border-radius:10px;min-width:320px;box-shadow:0 2px 16px rgba(0,0,0,0.18);color:#fff;display:flex;flex-direction:column;align-items:center;">
+                    <label for="workspaceSelect" style="margin-bottom:12px;color:#b3c6f7;">Select workspace</label>
+                    <select name="workspace" id="workspaceSelect" style="background:#23283a;color:#fff;border:1px solid #31374a;padding:8px 10px;border-radius:5px;width:220px;">
+                        <option value="current" {% if rule.workspace == 'current' %}selected{% endif %}>Current workspace</option>
+                        <option value="all_inboxes" {% if rule.workspace == 'all_inboxes' %}selected{% endif %}>All shared inboxes</option>
+                        <option value="all_labels" {% if rule.workspace == 'all_labels' %}selected{% endif %}>All shared labels</option>
+                        <option value="all_workspaces" {% if rule.workspace == 'all_workspaces' %}selected{% endif %}>All workspaces</option>
+                    </select>
+                    <div style="margin-top:18px;display:flex;gap:12px;">
+                        <button type="button" id="cancelWorkspaceBtn" style="background:#444b5e;color:#fff;padding:8px 18px;border-radius:5px;border:none;">Cancel</button>
+                        <button type="button" id="saveWorkspaceBtn" style="background:#8faaff;color:#23283a;padding:8px 18px;border-radius:5px;border:none;">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Filter Group and filter builder UI inside form -->
+        <div style="margin-bottom:32px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                <span style="font-size:1.6em;color:#4a8cff;">&#128269;</span>
+                <b style="font-size:1.1rem;">If <span style="font-weight:400;font-size:0.95em;">(optional)</span></b>
+            </div>
+            <div style="background:#181c24;padding:18px 16px;border-radius:8px;">
+                <b>Filter Group</b>
+                <div style="margin-top:10px;">
+                    <div id="filterConditionsContainer"></div>
+                    <div style="margin-top:14px;">
+                        <button id="addConditionBtn" type="button" style="width:100%;background:#393e52;color:#fff;font-weight:600;font-size:18px;border:none;padding:12px 0;border-radius:8px;">+ Add condition</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Time Action Section: Direct-only -->
+        <div style="margin-bottom:32px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                <span style="font-size:1.6em;color:#4a8cff;">&#9201;</span>
+                <b style="font-size:1.1rem;">Then</b>
+            </div>
+            <div style="background:#393949;padding:0 0 16px 0;border-radius:8px;">
+                <div style="background:#545464;padding:18px 24px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:1.3em;color:#8faaff;">&#9201;</span>
+                    <b style="font-size:1.1rem;">Time</b>
+                </div>
+                <div style="padding:16px 24px 0 24px;">
+                    <div style="display:flex;align-items:center;gap:12px;font-size:1.1rem;color:#b3c6f7;">
+                        <span style="background:#23283a;border:1px solid #31374a;color:#8faaff;border-radius:14px;padding:4px 10px;">Directly</span>
+                        <input type="hidden" name="time_type" value="directly">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Section -->
+        <div style="margin-bottom:32px;">
+            <div style="background:#393949;border-radius:8px;">
+                <div style="background:#545464;padding:18px 24px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:1.3em;color:#8faaff;">&#9873;</span>
+                    <b style="font-size:1.2rem;">Action</b>
+                </div>
+                <div style="padding:32px 36px 24px 36px;">
+                    <select id="actionDropdown" name="action" style="width:100%;background:#23283a;color:#fff;border:1px solid #31374a;padding:16px 18px;border-radius:6px;font-size:1.1rem;margin-bottom:24px;">
+                        <optgroup label="Assign">
+                            <option value="assign_to_sender">Assign to sender</option>
+                        </optgroup>
+                        <optgroup label="Status">
+                            <option value="change_status">Change status</option>
+                        </optgroup>
+                        <optgroup label="Tags">
+                            <option value="add_tags">Add tags</option>
+                            <option value="remove_tags">Remove tags</option>
+                        </optgroup>
+                        <optgroup label="Notes & Boards">
+                            <option value="add_note">Add a note</option>
+                            <option value="add_to_board">Add to a board view</option>
+                        </optgroup>
+                        <optgroup label="Workspace">
+                            <option value="add_workspace">Add workspace</option>
+                            <option value="remove_workspace">Remove workspace</option>
+                        </optgroup>
+                        <optgroup label="GMAIL">
+                            <option value="skip_inbox">Skip inbox (Archive conversation)</option>
+                            <option value="move_to_inbox">Move to inbox</option>
+                            <option value="send_email">Send an email or an auto-reply</option>
+                            <option value="route_conversation">Route conversation to another email address</option>
+                            <option value="create_draft">Create a draft</option>
+                            <option value="mark_important">Mark as important</option>
+                            <option value="move_to_trash">Move to trash</option>
+                            <option value="mark_spam">Mark as spam</option>
+                        </optgroup>
+                    </select>
+                    <div style="display:flex;align-items:center;gap:16px;margin-bottom:18px;">
+                        <button type="button" id="editEmailBtn" style="display:flex;align-items:center;gap:6px;background:none;border:1px solid #4a8cff;color:#4a8cff;padding:8px 18px;border-radius:24px;font-size:1.1rem;cursor:pointer;">
+                            <span style="font-size:1.2em;">&#9998;</span> Edit email
+                        </button>
+                    </div>
+                    <div style="display:flex;justify-content:center;">
+                        <button type="button" id="addActionBtn" style="display:flex;align-items:center;gap:8px;background:none;border:1px solid #8faaff;color:#8faaff;padding:10px 32px;border-radius:24px;font-size:1.15rem;cursor:pointer;">
+                            <span style="font-size:1.3em;">&#43;</span> Add action
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Email Editor Modal (hidden by default) -->
+        <div id="emailEditorModal" style="display:none;position:fixed;z-index:10000;top:0;left:0;width:100vw;height:100vh;background:rgba(30,32,44,0.96);backdrop-filter:blur(2px);align-items:flex-start;justify-content:center;overflow:auto;">
+            <div style="margin:40px auto 0 auto;max-width:1100px;width:98vw;background:#393949;border-radius:12px;padding:32px 36px 24px 36px;box-shadow:0 8px 32px #000a;position:relative;">
+                <!-- Modal Header -->
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+                    <div style="font-size:1.25rem;font-weight:600;color:#fff;">Compose email</div>
+                    <div>
+                        <button type="button" id="closeEmailEditorBtn" style="background:none;border:none;color:#b3c6f7;font-size:1.2rem;cursor:pointer;">Cancel</button>
+                        <button type="button" id="saveEmailEditorBtn" style="margin-left:18px;background:#4a8cff;color:#fff;border:none;padding:8px 32px;border-radius:24px;font-size:1.1rem;font-weight:600;cursor:pointer;">Save</button>
+                    </div>
+                </div>
+                <!-- Modal Body (to be filled in next step) -->
+                <div id="emailEditorBody">
+                    <!-- Email editor UI -->
+                    <form id="emailEditorForm" autocomplete="off" enctype="multipart/form-data">
+                        <div style="display:flex;gap:24px;margin-bottom:18px;">
+                            <div style="flex:2;">
+                                <label style="color:#b3c6f7;font-size:1.05rem;">Send from</label>
+                                <div style="display:flex;align-items:center;gap:10px;margin-top:4px;">
+                                    <input type="text" id="fromEmailInput" value="{{ user_gmail_email|default:'' }}" readonly style="background:#23283a;color:#fff;border:1px solid #31374a;padding:10px 16px;border-radius:6px;font-size:1.1rem;width:100%;">
+                                </div>
+                            </div>
+                            <div style="flex:1;">
+                                <label style="color:#b3c6f7;font-size:1.05rem;">Your name</label>
+                                <input type="text" placeholder="Your name" style="background:#23283a;color:#fff;border:1px solid #31374a;padding:10px 16px;border-radius:6px;font-size:1.1rem;width:100%;margin-top:4px;">
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:10px;margin-bottom:10px;">
+                            <button type="button" style="background:#23283a;color:#b3c6f7;border:none;padding:6px 16px;border-radius:6px;font-size:1rem;cursor:pointer;">+ Cc</button>
+                            <button type="button" style="background:#23283a;color:#b3c6f7;border:none;padding:6px 16px;border-radius:6px;font-size:1rem;cursor:pointer;">+ Bcc</button>
+                            <button type="button" style="background:#23283a;color:#b3c6f7;border:none;padding:6px 16px;border-radius:6px;font-size:1rem;cursor:pointer;">Reply-To</button>
+                        </div>
+                        <div style="background:#23283a;border-radius:10px 10px 0 0;padding:0 0 0 0;margin-bottom:0;">
+                            <div style="display:flex;align-items:center;gap:10px;padding:10px 16px 0 16px;">
+                                <select style="background:#23283a;color:#fff;border:none;font-size:1rem;">
+                                    <option>Sans serif</option>
+                                </select>
+                                <select style="background:#23283a;color:#fff;border:none;font-size:1rem;">
+                                    <option>small</option>
+                                </select>
+                                <button type="button" class="format-btn" data-cmd="bold" title="Bold" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;font-weight:bold;">B</button>
+                                <button type="button" class="format-btn" data-cmd="italic" title="Italic" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;font-style:italic;">I</button>
+                                <button type="button" class="format-btn" data-cmd="underline" title="Underline" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;text-decoration:underline;">U</button>
+                                <button type="button" class="format-btn" data-cmd="strikeThrough" title="Strikethrough" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;text-decoration:line-through;">S</button>
+                                <button type="button" class="format-btn" data-cmd="foreColor" data-value="#4a8cff" title="Text color" style="background:none;border:none;color:#4a8cff;font-size:1.1rem;cursor:pointer;">A</button>
+                                <button type="button" class="format-btn" data-cmd="insertText" data-value="😀" title="Emoji" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;">&#128515;</button>
+                                <button type="button" class="format-btn" data-cmd="insertText" data-value="[image]" title="Insert image" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;">&#128247;</button>
+                                <button type="button" class="format-btn" data-cmd="insertText" data-value="[link]" title="Insert link" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;">&#128279;</button>
+                                <button type="button" class="format-btn" data-cmd="html" title="HTML" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;">&#60;/&#62; HTML</button>
+                                <button type="button" style="background:#3a5cff;color:#fff;border:none;padding:4px 12px;border-radius:16px;font-size:1rem;cursor:pointer;">Templates &#9662;</button>
+                            </div>
+                            <div style="padding:0 16px 0 16px;">
+                                <div id="emailBodyInput" contenteditable="true" style="width:100%;min-height:180px;background:#23283a;color:#fff;border:none;font-size:1.1rem;padding:12px 0 0 0;resize:vertical;outline:none;border-radius:0 0 10px 10px;"></div>
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 16px 0 16px;font-size:0.95rem;color:#b3c6f7;">
+                            <span>div &rsaquo; span</span>
+                            <span id="wordCountDisplay" style="margin-left:auto;">0 words</span>
+                        </div>
+                        <div id="attachmentGroupsContainer" style="margin-top:18px;margin-bottom:0;">
+                        </div>
+                        <div style="margin-top:10px;margin-bottom:0;">
+                            <button type="button" id="addAttachmentGroupBtn" style="background:#23283a;color:#8faaff;border:1px solid #31374a;padding:6px 18px;border-radius:18px;font-size:1rem;cursor:pointer;">+ Add attachment group</button>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:18px;margin-top:18px;">
+                            <label style="display:flex;align-items:center;gap:8px;font-size:1rem;color:#b3c6f7;">
+                                <input type="checkbox" style="accent-color:#8faaff;"> Reply all
+                            </label>
+                            <button type="button" style="background:none;border:none;color:#8faaff;font-size:1rem;cursor:pointer;">&#9881; Insert Gmail signature</button>
+                            <button type="button" style="background:none;border:none;color:#8faaff;font-size:1rem;cursor:pointer;">&#128065; Send me a preview email</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+<script>
+    // WYSIWYG formatting buttons logic for email editor
+    document.addEventListener('DOMContentLoaded', function() {
+        const formatBtns = document.querySelectorAll('.format-btn');
+        const editor = document.getElementById('emailBodyInput');
+    const wordCountEl = document.getElementById('wordCountDisplay');
+        let htmlMode = false;
+        formatBtns.forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const cmd = btn.getAttribute('data-cmd');
+                const value = btn.getAttribute('data-value');
+                if (cmd === 'html') {
+                    htmlMode = !htmlMode;
+                    if (htmlMode) {
+                        editor.textContent = editor.innerHTML;
+                        editor.style.fontFamily = 'monospace';
+                        editor.style.background = '#181a23';
+                    } else {
+                        try { editor.innerHTML = editor.textContent; } catch (e) {}
+                        editor.style.fontFamily = '';
+                        editor.style.background = '#23283a';
+                    }
+                    return;
+                }
+                if (htmlMode) return;
+                editor.focus();
+                if (cmd === 'foreColor') {
+                    document.execCommand('styleWithCSS', false, true);
+                    document.execCommand('foreColor', false, value);
+                } else if (cmd === 'insertText') {
+                    if (value === '😀') {
+                        // Open emoji picker
+                        showEmojiPicker(editor);
+                    } else {
+                        document.execCommand('insertText', false, value);
+                    }
+                } else {
+                    document.execCommand(cmd, false, null);
+                }
+            });
+        });
+        // Word count logic
+        function computeWordCount(rawHtml) {
+            if (!rawHtml) return 0;
+            // Replace &nbsp; with space, strip tags, decode basic entities
+            let text = rawHtml
+                .replace(/&nbsp;/g, ' ')
+                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ') // strip tags
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&#39;/g, "'")
+                .replace(/&quot;/g, '"');
+            // Collapse whitespace
+            text = text.replace(/\s+/g, ' ').trim();
+            if (!text) return 0;
+            // Count words: sequences of letters/numbers (allow apostrophes inside words)
+            const words = text.match(/[A-Za-z0-9']+/g);
+            return words ? words.length : 0;
+        }
+        function updateWordCount() {
+            if (!wordCountEl || !editor) return;
+            const count = computeWordCount(htmlMode ? editor.textContent : editor.innerHTML);
+            wordCountEl.textContent = count + (count === 1 ? ' word' : ' words');
+        }
+        if (editor) {
+            editor.addEventListener('input', updateWordCount);
+        }
+        // Also update after formatting commands and HTML mode toggles
+        document.addEventListener('keyup', updateWordCount);
+        document.addEventListener('mouseup', updateWordCount);
+        // Initial count
+        updateWordCount();
+        // Keep hidden fields in sync so native form submit has required values
+        try {
+            const actionDropdown = document.getElementById('actionDropdown');
+            const editor = document.getElementById('emailBodyInput');
+            const hiddenActionType = document.getElementById('hiddenActionType');
+            const hiddenReply = document.getElementById('hiddenReplyMessage');
+            const hiddenActionBody = document.getElementById('hiddenActionEmailBody');
+            function syncAction() {
+                if (hiddenActionType && actionDropdown) hiddenActionType.value = actionDropdown.value || '';
+            }
+            function syncBody() {
+                if (editor) {
+                    const html = editor.innerHTML || '';
+                    if (hiddenReply) hiddenReply.value = html;
+                    if (hiddenActionBody) hiddenActionBody.value = html;
+                }
+            }
+            if (actionDropdown) {
+                syncAction();
+                actionDropdown.addEventListener('change', syncAction);
+            }
+            if (editor) {
+                syncBody();
+                editor.addEventListener('input', syncBody);
+            }
+            const saveEmailEditorBtn = document.getElementById('saveEmailEditorBtn');
+            if (saveEmailEditorBtn) saveEmailEditorBtn.addEventListener('click', syncBody);
+            const mainForm = document.getElementById('editRuleForm');
+            if (mainForm) mainForm.addEventListener('submit', syncBody);
+            // Prepopulate action/email body from actions_json script if available
+            try {
+                const actionsScript = document.getElementById('rule-actions');
+                if (actionsScript && actionsScript.textContent.trim()) {
+                    const parsed = JSON.parse(actionsScript.textContent);
+                    // Expose globally for attachments prepopulation
+                    window.__savedActions = parsed;
+                    if (parsed.length > 0) {
+                        const first = parsed[0];
+                        console.log('[Attachments] Parsed actions_json length =', parsed.length);
+                        console.log('[Attachments] First action attachment count =', Array.isArray(first.attachments) ? first.attachments.length : 0);
+                        if (Array.isArray(first.attachments)) {
+                            first.attachments.forEach((att, i) => {
+                                console.log('[Attachments] Saved file', i, 'group=', att.group, 'label=', att.label, 'name=', att.name, 'path=', att.path);
+                            });
+                        }
+                        if (actionDropdown && first.action_type) {
+                            actionDropdown.value = first.action_type;
+                            syncAction();
+                        }
+                        if (editor && first.email_body) {
+                            editor.innerHTML = first.email_body;
+                            syncBody();
+                        }
+                        console.log('Prepopulated action/email body from saved action');
+                    }
+                }
+            } catch (e) { console.warn('Action prepopulate error', e); }
+        } catch (e) { console.warn('Hidden sync error', e); }
+            // Redirect to / after successful rule save
+
+
+// Ensure AJAX form handler is attached after all DOM is loaded and all data is serialized
+document.addEventListener('DOMContentLoaded', function() {
+            var form = document.getElementById('editRuleForm');
+    if (form) {
+        form.onsubmit = function(e) {
+            e.preventDefault();
+
+
+            // --- Serialize all filter conditions ---
+            var filterRows = document.querySelectorAll('#filterConditionsContainer .filter-row');
+            // Remove any previous hidden filter fields
+            Array.from(form.querySelectorAll('input[name^="filter_field_"],input[name^="filter_condition_"],input[name^="filter_value_"],input[name^="and_or_"]')).forEach(el => el.remove());
+            filterRows.forEach(function(row, idx) {
+                var selects = row.querySelectorAll('select');
+                var inputs = row.querySelectorAll('input');
+                var field = selects[0];
+                var cond = selects[1];
+                var val = inputs[0];
+                var andor = null;
+                const prevEl = row.previousElementSibling;
+                if (prevEl && prevEl.classList.contains('and-or-row')) {
+                    andor = prevEl.querySelector('select');
+                }
+                function addHidden(name, value) {
+                    var input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = name;
+                    input.value = value || '';
+                    form.appendChild(input);
+                }
+                // Skip empty rows (no keywords value)
+                const keywordVal = val ? (val.value || '').trim() : '';
+                if (!keywordVal) {
+                    return; // don't add hidden fields for this row
+                }
+                if (field) addHidden('filter_field_' + idx, field.value);
+                if (cond) addHidden('filter_condition_' + idx, cond.value);
+                addHidden('filter_value_' + idx, keywordVal);
+                addHidden('and_or_' + idx, andor ? andor.value : 'AND');
+            });
+
+            // We'll build one FormData later (after injecting hidden fields)
+            var fd;
+
+            // --- Serialize action (single for now) ---
+            var actionDropdown = document.getElementById('actionDropdown');
+            if (actionDropdown) {
+                // Backend expects action_type_0 and action_email_body_0
+                var actInput = form.querySelector('input[name="action_type_0"]');
+                if (!actInput) {
+                    actInput = document.createElement('input');
+                    actInput.type = 'hidden';
+                    actInput.name = 'action_type_0';
+                    form.appendChild(actInput);
+                }
+                actInput.value = actionDropdown.value;
+                // Also mirror into fallback 'action' name if still present
+                actionDropdown.name = 'action';
+            }
+
+            // --- Serialize email draft (WYSIWYG) ---
+            var emailBodyInput = document.getElementById('emailBodyInput');
+            if (emailBodyInput) {
+                // Save into both rule.reply_message and action_email_body_0
+                var replyMsgInput = form.querySelector('input[name="reply_message"]') || form.querySelector('textarea[name="reply_message"]');
+                if (!replyMsgInput) {
+                    replyMsgInput = document.createElement('input');
+                    replyMsgInput.type = 'hidden';
+                    replyMsgInput.name = 'reply_message';
+                    form.appendChild(replyMsgInput);
+                }
+                replyMsgInput.value = emailBodyInput.innerHTML;
+
+                var actionEmailBody = form.querySelector('input[name="action_email_body_0"]');
+                if (!actionEmailBody) {
+                    actionEmailBody = document.createElement('input');
+                    actionEmailBody.type = 'hidden';
+                    actionEmailBody.name = 'action_email_body_0';
+                    form.appendChild(actionEmailBody);
+                }
+                actionEmailBody.value = emailBodyInput.innerHTML;
+            }
+
+            // Now build FormData (includes the hidden fields we just injected)
+            fd = new FormData();
+            // Append all non-file fields manually to avoid browser auto-including stale file inputs
+            const formElements = form.elements;
+            for (let i = 0; i < formElements.length; i++) {
+                const el = formElements[i];
+                if (!el.name) continue;
+                if (el.type === 'file') continue; // we'll handle files below explicitly
+                if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) continue;
+                fd.append(el.name, el.value);
+            }
+
+            // --- Serialize attachments from email editor groups into FormData ---
+            try {
+                var groups = document.querySelectorAll('#attachmentGroupsContainer .attachment-group');
+                groups.forEach(function(group, gidx) {
+                    var labelInput = group.querySelector('.attachment-group-label');
+                    var fileInput = group.querySelector('input[type="file"]');
+                    // Determine stable index from element attributes to avoid mismatch after deletions
+                    var stableIdx = (function() {
+                        if (fileInput && fileInput.name && fileInput.name.startsWith('attachment_')) {
+                            var m = fileInput.name.match(/^attachment_(\d+)$/);
+                            if (m) return parseInt(m[1]);
+                        }
+                        if (labelInput && labelInput.dataset && labelInput.dataset.idx) {
+                            var n = parseInt(labelInput.dataset.idx);
+                            if (!isNaN(n)) return n;
+                        }
+                        return gidx; // fallback
+                    })();
+                    if (labelInput) {
+                        fd.append('attachment_group_label_' + stableIdx, labelInput.value || '');
+                    }
+                    if (fileInput && fileInput.files && fileInput.files.length) {
+                        console.log('Appending files for group', stableIdx, 'count', fileInput.files.length);
+                        Array.from(fileInput.files).forEach(function(file) {
+                            console.log('Appending file for group', stableIdx, file.name, file.size);
+                            fd.append('attachment_' + stableIdx, file, file.name);
+                        });
+                    }
+                });
+            } catch (e) {
+                console.warn('Attachment serialization error:', e);
+            }
+
+            // Debug: log all FormData keys/values before submit
+            console.log('FormData being sent:');
+            for (var pair of fd.entries()) {
+                console.log(pair[0]+ ':', pair[1]);
+            }
+            const editorSnapshot = document.getElementById('emailBodyInput')?.innerHTML || '';
+            console.log('Email body snapshot length:', editorSnapshot.length);
+
+            // Get CSRF token from cookie
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+            fetch(form.action, {
+                method: 'POST',
+                body: fd,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': getCookie('csrftoken')
+                }
+            })
+            .then(resp => {
+                if (!resp.ok) throw new Error('Network error');
+                return resp.json();
+            })
+            .then(data => {
+                if (data && data.status === 'success') {
+                    // Redirect back to the rule edit UI so updated attachments JSON (including merged files) is visible
+                    if (data.rule_id) {
+                        window.location.href = '/rule/' + data.rule_id + '/edit-ui/';
+                    } else {
+                        // Fallback: go home
+                        window.location.href = '/';
+                    }
+                } else {
+                    alert('Failed to save rule. Response: ' + JSON.stringify(data));
+                    console.warn('Server response (failure path):', data);
+                }
+            })
+            .catch((err) => {
+                alert('Failed to save rule. Error: ' + err);
+                console.error('Fetch error:', err);
+            });
+            return false;
+        };
+    }
+});
+
+        // Emoji picker logic
+        function showEmojiPicker(target) {
+            let picker = document.getElementById('emojiPickerModal');
+            if (!picker) {
+                picker = document.createElement('div');
+                picker.id = 'emojiPickerModal';
+                picker.style.position = 'fixed';
+                picker.style.zIndex = '10001';
+                picker.style.left = '50%';
+                picker.style.top = '30%';
+                picker.style.transform = 'translate(-50%, -50%)';
+                picker.style.background = '#23283a';
+                picker.style.border = '1px solid #31374a';
+                picker.style.borderRadius = '12px';
+                picker.style.padding = '18px 24px';
+                picker.style.boxShadow = '0 4px 24px #000a';
+                picker.style.maxWidth = '420px';
+                picker.style.maxHeight = '260px';
+                picker.style.overflowY = 'auto';
+                picker.innerHTML = '<div style="font-size:1.5rem;display:flex;flex-wrap:wrap;gap:10px;max-width:400px;">' +
+                    ['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','😘','🥰','😗','😙','😚','🙂','🤗','🤩','🤔','🤨','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','🥱','😴','😌','😛','😜','😝','🤤','😒','😓','😔','😕','🙃','🤑','😲','☹️','🙁','😖','😞','😟','😤','😢','😭','😦','😧','😨','😩','🤯','😬','😰','😱','🥵','🥶','😳','🤪','😵','😡','😠','🤬','😷','🤒','🤕','🤢','🤮','🥴','😇','🥳','🥺','🤠','🤡','🤥','🤫','🤭','🧐','🤓','😈','👿','👹','👺','💀','👻','👽','🤖','💩','😺','😸','😹','😻','😼','😽','🙀','😿','😾'].map(e=>`<span class="emoji-choice" style="cursor:pointer;">${e}</span>`).join('') + '</div>';
+                document.body.appendChild(picker);
+                picker.addEventListener('click', function(ev) {
+                    if (ev.target.classList.contains('emoji-choice')) {
+                        document.execCommand('insertText', false, ev.target.textContent);
+                        picker.remove();
+                    }
+                });
+            }
+        }
+        // Dismiss emoji picker on outside click
+        document.addEventListener('mousedown', function(e) {
+            const picker = document.getElementById('emojiPickerModal');
+            if (picker && !picker.contains(e.target)) {
+                picker.remove();
+            }
+        });
+    });
+    // Multiple attachment groups logic for email editor
+    document.addEventListener('DOMContentLoaded', function() {
+        const attachmentGroupsContainer = document.getElementById('attachmentGroupsContainer');
+        const addAttachmentGroupBtn = document.getElementById('addAttachmentGroupBtn');
+        let groupCount = 0; // tracks the next free index when creating new groups without a fixed index
+
+        function createAttachmentGroup(labelValue = '', fixedIdx = null, existingFiles = []) {
+            // Determine the index to use for this group
+            let idx;
+            if (typeof fixedIdx === 'number' && !isNaN(fixedIdx)) {
+                idx = fixedIdx;
+                if (idx >= groupCount) groupCount = idx + 1;
+            } else {
+                idx = groupCount;
+                groupCount++;
+            }
+            const groupId = `attachmentGroup_${idx}`;
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'attachment-group';
+            groupDiv.style.marginBottom = '12px';
+            groupDiv.style.background = '#23283a';
+            groupDiv.style.padding = '12px 16px';
+            groupDiv.style.borderRadius = '10px';
+            groupDiv.style.position = 'relative';
+            groupDiv.innerHTML = `
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <input type="text" class="attachment-group-label" data-idx="${idx}" placeholder="Attachment group label (e.g. Java resumes)" value="${labelValue}" style="background:#23283a;color:#fff;border:1px solid #31374a;padding:6px 12px;border-radius:6px;font-size:1rem;flex:1;">
+                    <input type="hidden" name="attachment_group_label_${idx}" value="${labelValue}">
+                    <label for="${groupId}Input" style="background:#393949;color:#8faaff;border:none;padding:6px 16px;border-radius:16px;font-size:1rem;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                        <span>📎</span> Attach files
+                        <input id="${groupId}Input" name="attachment_${idx}" type="file" multiple style="display:none;">
+                    </label>
+                    <button type="button" class="removeAttachmentGroupBtn" style="background:none;border:none;color:#ff6b6b;font-size:1.2rem;cursor:pointer;">&times;</button>
+                </div>
+                <div class="attachedFilesList" style="display:flex;flex-direction:column;gap:8px;">
+                    <div class="savedFilesList" style="display:flex;flex-wrap:wrap;gap:10px;"></div>
+                    <div class="newFilesList" style="display:flex;flex-wrap:wrap;gap:10px;"></div>
+                </div>
+            `;
+
+            // Remove group button
+            groupDiv.querySelector('.removeAttachmentGroupBtn').onclick = function() {
+                groupDiv.remove();
+            };
+
+            // Attach files logic for this group
+            const fileInput = groupDiv.querySelector(`#${groupId}Input`);
+            const hiddenLabel = groupDiv.querySelector(`input[type="hidden"][name="attachment_group_label_${idx}"]`);
+            const labelInput = groupDiv.querySelector('.attachment-group-label');
+            if (labelInput && hiddenLabel) {
+                labelInput.addEventListener('input', () => {
+                    hiddenLabel.value = labelInput.value;
+                });
+            }
+            const filesList = groupDiv.querySelector('.attachedFilesList');
+            const savedList = groupDiv.querySelector('.savedFilesList');
+            const newList = groupDiv.querySelector('.newFilesList');
+            function renderFilesList() {
+                // Only re-render the list of newly selected files, preserve saved chips
+                newList.innerHTML = '';
+                const files = fileInput.files;
+                if (!files || files.length === 0) return;
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const fileChip = document.createElement('div');
+                    fileChip.style.background = '#393949';
+                    fileChip.style.color = '#b3c6f7';
+                    fileChip.style.padding = '6px 10px 6px 12px';
+                    fileChip.style.borderRadius = '16px';
+                    fileChip.style.fontSize = '0.96rem';
+                    fileChip.style.display = 'flex';
+                    fileChip.style.alignItems = 'center';
+                    fileChip.style.gap = '8px';
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = file.name;
+                    const iconSpan = document.createElement('span');
+                    iconSpan.textContent = '📎';
+                    const closeBtn = document.createElement('button');
+                    closeBtn.type = 'button';
+                    closeBtn.textContent = '×';
+                    closeBtn.title = 'Remove';
+                    closeBtn.style.background = 'transparent';
+                    closeBtn.style.border = 'none';
+                    closeBtn.style.color = '#ff7676';
+                    closeBtn.style.cursor = 'pointer';
+                    closeBtn.style.fontSize = '1.1rem';
+                    closeBtn.style.lineHeight = '1';
+                    closeBtn.addEventListener('click', function() {
+                        // Remove this file from the FileList by rebuilding via DataTransfer
+                        const dt = new DataTransfer();
+                        for (let j = 0; j < files.length; j++) {
+                            if (j !== i) dt.items.add(files[j]);
+                        }
+                        fileInput.files = dt.files;
+                        renderFilesList();
+                    });
+                    fileChip.appendChild(iconSpan);
+                    fileChip.appendChild(nameSpan);
+                    fileChip.appendChild(closeBtn);
+                    newList.appendChild(fileChip);
+                }
+            }
+            fileInput.addEventListener('change', renderFilesList);
+
+            // If we have existing (already-saved) files for this group, render them as read-only chips with download link
+            if (existingFiles && existingFiles.length > 0) {
+                const MEDIA_PREFIX = '/media/';
+                existingFiles.forEach(f => {
+                    const savedChip = document.createElement('div');
+                    savedChip.style.background = '#2f3444';
+                    savedChip.style.color = '#b3c6f7';
+                    savedChip.style.padding = '6px 10px 6px 12px';
+                    savedChip.style.borderRadius = '16px';
+                    savedChip.style.fontSize = '0.96rem';
+                    savedChip.style.display = 'flex';
+                    savedChip.style.alignItems = 'center';
+                    savedChip.style.gap = '8px';
+                    const icon = document.createElement('span');
+                    icon.textContent = '📎';
+                    const link = document.createElement('a');
+                    link.href = MEDIA_PREFIX + (f.path || '');
+                    link.textContent = f.name || 'file';
+                    link.target = '_blank';
+                    link.style.color = '#9fc3ff';
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
+                    removeBtn.textContent = '×';
+                    removeBtn.title = 'Remove this saved file';
+                    removeBtn.style.background = 'transparent';
+                    removeBtn.style.border = 'none';
+                    removeBtn.style.color = '#ff7676';
+                    removeBtn.style.cursor = 'pointer';
+                    removeBtn.style.fontSize = '1.1rem';
+                    removeBtn.style.lineHeight = '1';
+                    removeBtn.addEventListener('click', () => {
+                        // Mark for deletion by adding hidden input
+                        const hiddenDel = document.createElement('input');
+                        hiddenDel.type = 'hidden';
+                        hiddenDel.name = 'delete_saved_attachment';
+                        hiddenDel.value = f.path || '';
+                        form.appendChild(hiddenDel);
+                        savedChip.remove();
+                    });
+                    savedChip.appendChild(icon);
+                    savedChip.appendChild(link);
+                    savedChip.appendChild(removeBtn);
+                    savedList.appendChild(savedChip);
+                });
+            }
+
+            attachmentGroupsContainer.appendChild(groupDiv);
+        }
+
+        if (addAttachmentGroupBtn && attachmentGroupsContainer) {
+            addAttachmentGroupBtn.addEventListener('click', function() {
+                createAttachmentGroup();
+            });
+        }
+        // Prepopulate from saved attachments if available, else create one blank group
+        try {
+            const saved = (window.__savedActions && window.__savedActions[0] && Array.isArray(window.__savedActions[0].attachments)) ? window.__savedActions[0].attachments : [];
+            if (saved.length > 0) {
+                // Group by 'group' index
+                const grouped = new Map();
+                saved.forEach(it => {
+                    const gi = typeof it.group === 'number' ? it.group : 0;
+                    if (!grouped.has(gi)) grouped.set(gi, []);
+                    grouped.get(gi).push(it);
+                });
+                console.log('[Attachments] Prepopulate groups found:', Array.from(grouped.keys()));
+                Array.from(grouped.keys()).sort((a,b)=>a-b).forEach(gi => {
+                    const files = grouped.get(gi);
+                    const label = files[0] && files[0].label ? files[0].label : '';
+                    createAttachmentGroup(label, gi, files);
+                    console.log('[Attachments] Rendered group', gi, 'label=', label, 'fileCount=', files.length);
+                });
+            } else {
+                createAttachmentGroup();
+                console.log('[Attachments] No saved attachments; created blank group');
+            }
+        } catch (e) {
+            console.warn('Attachment prepopulate error:', e);
+            createAttachmentGroup();
+        }
+    });
+    // Email Editor Modal logic
+    const editEmailBtn = document.getElementById('editEmailBtn');
+    const emailEditorModal = document.getElementById('emailEditorModal');
+    const closeEmailEditorBtn = document.getElementById('closeEmailEditorBtn');
+    const saveEmailEditorBtn = document.getElementById('saveEmailEditorBtn');
+    if (editEmailBtn && emailEditorModal) {
+        editEmailBtn.addEventListener('click', function() {
+            emailEditorModal.style.display = 'flex';
+            setTimeout(() => {
+                const textarea = document.getElementById('emailBodyInput');
+                if (textarea) textarea.focus();
+            }, 100);
+        });
+    }
+    if (closeEmailEditorBtn) {
+        closeEmailEditorBtn.addEventListener('click', function() {
+            emailEditorModal.style.display = 'none';
+        });
+    }
+    if (saveEmailEditorBtn) {
+        saveEmailEditorBtn.addEventListener('click', function() {
+            emailEditorModal.style.display = 'none';
+        });
+    }
+    // --- Filter conditions logic (use global functions from static/rule_edit.js) ---
+    const filterConditionsContainer = document.getElementById('filterConditionsContainer');
+    const addConditionBtn = document.getElementById('addConditionBtn');
+    function getCurrentConditionCount() {
+        return filterConditionsContainer.querySelectorAll('.filter-row').length;
+    }
+    function addConditionRow() {
+        const existing = getCurrentConditionCount();
+        if (existing > 0 && window.createAndOrSelector) {
+            // Use next index for AND/OR so backend index matches the row that follows
+            filterConditionsContainer.appendChild(window.createAndOrSelector(existing));
+        }
+        if (window.createConditionRow) {
+            filterConditionsContainer.appendChild(window.createConditionRow(existing, '', '', '', 'AND'));
+        }
+    }
+    if (addConditionBtn) {
+        addConditionBtn.addEventListener('click', addConditionRow);
+    }
+    // Initial condition row creation handled by rule_edit_prepopulate.js
+
+    // Time logic simplified to direct-only; no interactive controls needed.
+
+    // --- Workspace pencil button logic ---
+    var editBtn = document.getElementById('editWorkspaceBtn');
+    var modal = document.getElementById('workspaceModal');
+    var select = document.getElementById('workspaceSelect');
+    var label = document.getElementById('workspaceLabel');
+    var saveBtn = document.getElementById('saveWorkspaceBtn');
+    var cancelBtn = document.getElementById('cancelWorkspaceBtn');
+    var form = document.getElementById('editRuleForm');
+    if (editBtn && modal) {
+        editBtn.onclick = function() {
+            modal.style.display = 'flex';
+        };
+    }
+    if (cancelBtn && modal) {
+        cancelBtn.onclick = function() {
+            modal.style.display = 'none';
+        };
+    }
+    if (saveBtn && modal && select && label) {
+        saveBtn.onclick = function() {
+            var map = {
+                'current': 'Current workspace',
+                'all_inboxes': 'All shared inboxes',
+                'all_labels': 'All shared labels',
+                'all_workspaces': 'All workspaces'
+            };
+            label.textContent = map[select.value] || select.value;
+            // Set a hidden input for form submit
+            var hidden = document.getElementById('workspaceHiddenInput');
+            if (!hidden) {
+                hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = 'workspace';
+                hidden.id = 'workspaceHiddenInput';
+                form.appendChild(hidden);
+            }
+            hidden.value = select.value;
+            modal.style.display = 'none';
+        };
+    }
+    if (form && select) {
+        // Don't overwrite form.onsubmit; add a submit listener to inject workspace value
+        form.addEventListener('submit', function() {
+            var hidden = document.getElementById('workspaceHiddenInput');
+            if (!hidden) {
+                hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = 'workspace';
+                hidden.id = 'workspaceHiddenInput';
+                form.appendChild(hidden);
+            }
+            hidden.value = select.value;
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail Auto Reply Rule</title>
+    <link rel="stylesheet" href="/static/rule_form.css">
+</head>
+<body>
+    <div class="container">
+        <h2>Auto Reply Rule</h2>
+        <form id="ruleForm">
+            <label for="rule_name">Rule Name</label>
+            <input type="text" id="rule_name" name="rule_name" required>
+
+            <label for="keywords">Keywords (comma-separated)</label>
+            <input type="text" id="keywords" name="keywords" required>
+
+            <label for="reply_message">Reply Message</label>
+            <textarea id="reply_message" name="reply_message" required></textarea>
+
+            <label for="file_id">File ID (optional)</label>
+            <input type="text" id="file_id" name="file_id">
+
+            <label class="switch">
+                <input type="checkbox" id="enabled" name="enabled" checked>
+                <span class="slider round"></span>
+                Enable Rule
+            </label>
+
+            <button type="submit">Save Rule</button>
+        </form>
+        <div id="result"></div>
+    </div>
+    <script src="/static/rule_form.js"></script>
+</body>
+</html>

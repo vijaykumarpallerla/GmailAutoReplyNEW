@@ -1,0 +1,93 @@
+document.addEventListener('DOMContentLoaded', function() {
+    const rulesTableContainer = document.getElementById('rulesTableContainer');
+    const addRuleBtn = document.getElementById('addRuleBtn');
+
+    if (addRuleBtn) {
+        addRuleBtn.addEventListener('click', function() {
+            window.location.href = '/rule/create-ui/';
+        });
+    }
+
+    function fetchRules() {
+        fetch('/rules/')
+            .then(res => {
+                if (!res.ok) throw new Error('Network error: ' + res.status);
+                return res.json();
+            })
+            .then(data => {
+                renderRulesTable(data.rules);
+            })
+            .catch(err => {
+                // Optionally handle error silently or show a user-friendly message
+            });
+    }
+
+
+    function renderRulesTable(rules) {
+        if (!rules.length) {
+            rulesTableContainer.innerHTML = '<div style="text-align:center;color:#aeb4c6;">No rules yet. Click + to add one.</div>';
+            return;
+        }
+        let html = '<table class="table"><thead><tr>' +
+            '<th>Name</th><th>Keywords</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+        for (const rule of rules) {
+            html += `<tr>
+                <td>${rule.rule_name}</td>
+                <td>${rule.keywords}</td>
+                <td>
+                    <label class="toggle-switch">
+                        <input type="checkbox" data-id="${rule.id}" class="toggle-enabled" ${rule.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </td>
+                <td>
+                    <button class="action-btn edit-btn" data-id="${rule.id}">✏️</button>
+                    <button class="action-btn delete-btn" data-id="${rule.id}">🗑️</button>
+                </td>
+            </tr>`;
+        }
+        html += '</tbody></table>';
+        rulesTableContainer.innerHTML = html;
+        attachTableEvents();
+    }
+
+
+    function attachTableEvents() {
+        document.querySelectorAll('.toggle-enabled').forEach(el => {
+            el.addEventListener('change', function() {
+                fetch(`/rule/${el.dataset.id}/toggle/`, {method: 'POST', headers: {'X-CSRFToken': getCookie('csrftoken')}})
+                    .then(() => fetchRules());
+            });
+        });
+        document.querySelectorAll('.edit-btn').forEach(el => {
+            el.addEventListener('click', function() {
+                window.location.href = `/rule/${el.dataset.id}/edit-ui/`;
+            });
+        });
+        document.querySelectorAll('.delete-btn').forEach(el => {
+            el.addEventListener('click', function() {
+                if (confirm('Delete this rule?')) {
+                    fetch(`/rule/${el.dataset.id}/delete/`, {method: 'POST', headers: {'X-CSRFToken': getCookie('csrftoken')}})
+                        .then(() => fetchRules());
+                }
+            });
+        });
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    fetchRules();
+});

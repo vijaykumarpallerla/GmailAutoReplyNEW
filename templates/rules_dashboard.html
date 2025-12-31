@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="sidebar">
+    <div class="sidebar-title">Automation</div>
+    <ul>
+        <li class="active"><span>⚡</span> Rules <button id="addRuleBtn">+</button></li>
+
+    </ul>
+</div>
+<div class="main-content">
+    <h2>Rules</h2>
+    <!-- Gmail Status Card Removed as per Single-Step Login Requirement -->
+
+    <!-- Stats Card -->
+    <div class="card"
+        style="margin-bottom:16px;padding:12px;border:1px solid #ddd;border-radius:8px; display: flex; gap: 20px;">
+        <div>
+            <strong>Sent Today:</strong> {{ today_count }}
+        </div>
+        <div>
+            <strong>Total Sent:</strong> {{ total_count }}
+        </div>
+    </div>
+    <div id="rulesTableContainer"></div>
+    <div id="ruleModal" class="modal" style="display:none;"></div>
+</div>
+<script src="/static/rules_dashboard.js"></script>
+{% endblock %}

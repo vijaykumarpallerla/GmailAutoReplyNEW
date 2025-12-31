@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<div
+    style="max-width:480px;margin:100px auto;background:#23283a;color:#fff;padding:48px 42px;border-radius:12px;box-shadow:0 4px 24px #0006;font-family:system-ui,Segoe UI,Roboto,sans-serif;text-align:center;">
+    <h2 style="margin:0 0 32px 0;font-weight:600;font-size:2rem;">Welcome</h2>
+
+    <div style="display:flex;flex-direction:column;gap:14px;">
+        <a href="{% url 'gmail_auth' %}"
+            style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#23283a;padding:14px 0;border-radius:8px;font-weight:600;font-size:1.1rem;text-decoration:none;transition:transform 0.1s ease;">
+            <span style="font-size:1.3rem;">&#128279;</span> Continue with Google
+        </a>
+    </div>
+    <p style="margin-top:24px;font-size:0.9rem;color:#8893a9;line-height:1.5;">
+        Sign in to manage your auto-reply rules.<br>
+        This will connect your Gmail account in a single step.
+    </p>
+</div>
+{% endblock %}
