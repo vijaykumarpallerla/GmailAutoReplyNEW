@@ -194,25 +194,27 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
         for m in messages:
             print(f"[DEBUG] Loop: Processing message id: {m['id']} for user: {user.username}", file=sys.stderr)
             
+            # CRITICAL: Get message metadata FIRST to extract historyId (even if we skip the message)
+            msg = service.users().messages().get(userId='me', id=m['id'], format='metadata').execute()
+            
+            # Update max_history_id from this message (BEFORE checking if we should skip)
+            history_id = str(msg.get('historyId') or '')
+            if history_id:
+                if max_history_id is None or (history_id.isdigit() and int(history_id) > int(max_history_id or '0')):
+                    max_history_id = history_id
+            
             # CHECK: Did WE send this message as an auto-reply?
             # If this message ID is in our ReplyLog as a 'message_id' (the one we sent), skip it.
             if ReplyLog.objects.filter(message_id=m['id']).exists():
-                print(f"[DEBUG] Skipping message {m['id']} because it was sent by the bot.", file=sys.stderr)
+                print(f"[DEBUG] Skipping message {m['id']} (historyId={history_id}) because it was sent by the bot.", file=sys.stderr)
                 continue
 
             processed += 1
-            # Use format='metadata' instead of 'full' to reduce API response size and speed up
-            msg = service.users().messages().get(userId='me', id=m['id'], format='metadata').execute()
             thread_id = msg.get('threadId')
             
             # REMOVED: Global thread-level deduplication check
             # We now allow multiple replies per thread if they are from different rules.
             # Specific rule deduplication happens inside the rule loop.
-
-            history_id = str(msg.get('historyId') or '')
-            if history_id:
-                if max_history_id is None or (history_id.isdigit() and int(history_id) > int(max_history_id or '0')):
-                    max_history_id = history_id
             payload = msg.get('payload', {})
             headers = payload.get('headers', [])
             subject = get_header(headers, 'Subject') or ''
