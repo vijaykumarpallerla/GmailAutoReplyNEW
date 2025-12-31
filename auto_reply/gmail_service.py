@@ -239,6 +239,7 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
             print(f"[DEBUG] Subject: {subject}", file=sys.stderr)
             reply_to = parse_email_address(get_header(headers, 'Reply-To'))
             from_email = parse_email_address(get_header(headers, 'From'))
+            original_message_id = get_header(headers, 'Message-ID')
             
             # Determine Recipient:
             # If it's an INBOX mail, we reply to 'Reply-To' or 'From'.
@@ -341,6 +342,13 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
                 msg_root = MIMEMultipart('related')
                 msg_root['To'] = to_addr
                 msg_root['Subject'] = email_subject
+                
+                # Add email threading headers for proper Gmail thread linking
+                if original_message_id:
+                    msg_root['In-Reply-To'] = original_message_id
+                    msg_root['References'] = original_message_id
+                    print(f"[DEBUG] Added threading headers with Message-ID: {original_message_id}", file=sys.stderr)
+                
                 msg_alt = MIMEMultipart('alternative')
                 msg_alt.attach(MIMEText(html_body, 'html'))
                 msg_root.attach(msg_alt)
