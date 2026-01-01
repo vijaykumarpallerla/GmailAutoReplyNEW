@@ -339,6 +339,13 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
                         _signature_cache[cache_key] = ''
                 else:
                     print(f"[DEBUG] Using cached Gmail signature for user {user.username}", file=sys.stderr)
+                
+                # Append cached signature to email body
+                signature_html = _signature_cache.get(cache_key, '')
+                if signature_html:
+                    print(f"[DEBUG] Appending signature to email body", file=sys.stderr)
+                    html_body = f"{html_body}<br>{signature_html}"
+                
                 msg_root = MIMEMultipart('related')
                 msg_root['To'] = to_addr
                 msg_root['Subject'] = email_subject
