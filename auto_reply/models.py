@@ -6,7 +6,7 @@ class RuleCondition(models.Model):
     rule = models.ForeignKey('AutoReplyRule', on_delete=models.CASCADE, related_name='conditions')
     field = models.CharField(max_length=64)
     condition = models.CharField(max_length=32)
-    value = models.CharField(max_length=255)
+    value = models.TextField(blank=True)  # Changed from CharField(255) to TextField for unlimited keywords
     and_or = models.CharField(max_length=8, default='AND')  # AND/OR logic between conditions
 
     def __str__(self):
