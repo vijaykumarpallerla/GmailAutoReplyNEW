@@ -255,6 +255,11 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
                 # INBOX mail: prefer Reply-To, fallback to From
                 to_addr = reply_to or from_email
                 print(f"[DEBUG] Message is INBOX. Target recipient (Reply-To preferred): {to_addr}", file=sys.stderr)
+            
+            # Handle multi-address fields (take only the first email if multiple are present)
+            if to_addr and ',' in to_addr:
+                to_addr = to_addr.split(',')[0].strip()
+                print(f"[DEBUG] Multiple recipients found, using first: {to_addr}", file=sys.stderr)
 
             if not to_addr:
                 print(f"[DEBUG] No recipient found for message id: {m['id']}", file=sys.stderr)
@@ -281,7 +286,7 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
             print(f"[DEBUG] Matched {len(matched_rules)} rules for message {m['id']}", file=sys.stderr)
             
             matched += 1
-            subject_key = _normalize_subject_key(subject)
+            subject_key = _normalize_subject_key(subject)[:255]  # Truncate to 255 chars to fit DB column
 
             # Process each matching rule
             for rule in matched_rules:
