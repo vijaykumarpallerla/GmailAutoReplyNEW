@@ -1,6 +1,7 @@
 import sys
 import os
 import base64
+import time
 from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
@@ -21,6 +22,11 @@ default_storage = storages['default']
 # Cache for Gmail signatures (per user) to avoid repeated API calls
 _signature_cache = {}
 
+# Cache for attachment file existence (2-hour TTL to balance API cost vs file freshness)
+_attachment_exists_cache = {}
+_cache_expiry = {}
+ATTACHMENT_CACHE_TTL = 7200  # 2 hours in seconds - detects file updates within 2 hours
+
 
 def _normalize_subject_key(s: str) -> str:
     s = (s or '').strip().lower()
@@ -28,6 +34,39 @@ def _normalize_subject_key(s: str) -> str:
         if s.startswith(pref):
             s = s[len(pref):].strip()
     return s
+
+
+def _attachment_exists_with_cache(path: str) -> bool:
+    """
+    Check if attachment exists in storage, using 2-hour cache to reduce API calls.
+    This prevents hitting Cloudinary's 500 API calls/hour limit.
+    """
+    global _attachment_exists_cache, _cache_expiry
+    
+    current_time = time.time()
+    
+    # Check if we have a cached result that hasn't expired
+    if path in _attachment_exists_cache:
+        if current_time < _cache_expiry.get(path, 0):
+            # Cache hit! Return cached result without API call
+            print(f"[CACHE HIT] Using cached result (0 API calls): {path}", file=sys.stderr)
+            return _attachment_exists_cache[path]
+        else:
+            # Cache expired, remove it
+            del _attachment_exists_cache[path]
+            del _cache_expiry[path]
+    
+    # Cache miss or expired - check storage (1 API call to Cloudinary)
+    print(f"[CACHE MISS] Checking Cloudinary (1 API call): {path}", file=sys.stderr)
+    try:
+        exists = default_storage.exists(path)
+        # Cache the result for 2 hours
+        _attachment_exists_cache[path] = exists
+        _cache_expiry[path] = current_time + ATTACHMENT_CACHE_TTL
+        return exists
+    except Exception as e:
+        print(f"[DEBUG] Error checking attachment existence: {e}", file=sys.stderr)
+        return False
 
 
 def _eval_conditions_simple(rule_obj, subj: str) -> bool:
@@ -370,7 +409,7 @@ def gmail_pull_for_user(user, q: str = 'newer_than:1h', max_results: int = 10) -
                         name = att.get('name') or 'file'
                         ctype = att.get('content_type') or 'application/octet-stream'
                         print(f"[DEBUG] gmail_service checking attachment: path={path}, name={name}", file=sys.stderr)
-                        if path and default_storage.exists(path):
+                        if path and _attachment_exists_with_cache(path):
                             print(f"[DEBUG] gmail_service attachment exists, opening: {path}", file=sys.stderr)
                             with default_storage.open(path, 'rb') as fh:
                                 content = fh.read()
