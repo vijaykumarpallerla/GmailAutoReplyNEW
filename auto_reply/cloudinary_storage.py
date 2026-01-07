@@ -128,17 +128,14 @@ class CloudinaryStorage(Storage):
             raise
 
     def _open(self, name, mode='rb'):
-        """Fetch file from Cloudinary using API-authenticated download."""
+        """Fetch file from Cloudinary using API-authenticated download with personal key ONLY."""
         import requests
         from io import BytesIO
-        import hashlib
-        import time
-        
         public_id = self._get_public_id(name)
-        print(f"[DEBUG] CloudinaryStorage._open fetching: {public_id}", flush=True)
-        
+        print(f"[DEBUG] CloudinaryStorage._open fetching with personal key: {public_id}", flush=True)
+
         try:
-            # Get resource info from Cloudinary API (this is authenticated)
+            # Get resource info from Cloudinary API using personal credentials
             resource = cloudinary.api.resource(
                 public_id,
                 resource_type='raw',
@@ -146,45 +143,34 @@ class CloudinaryStorage(Storage):
                 api_key=self.api_key,
                 api_secret=self.api_secret,
             )
-            
-            # Get the URL from the resource - Cloudinary gives us back authenticated info
+
+            # Get the URL from the resource using personal credentials
             url = resource.get('secure_url') or resource.get('url')
             print(f"[DEBUG] CloudinaryStorage._open got URL: {url}", flush=True)
-            
-            # Create a signed download URL using Cloudinary's private API
-            # For raw files, we need to use the actual authenticated secure_url
-            # or generate a signed URL with authentication token
-            
-            # Cloudinary's secure_url should work without additional auth since it's from the API
-            response = requests.get(url, timeout=30, allow_redirects=True)
-            
-            if response.status_code == 401:
-                print(f"[DEBUG] Got 401 on secure_url, this may be a private resource", flush=True)
-                # Try using the cloudinary library's private download with auth
-                # by calling the authenticated API endpoint directly
-                try:
-                    from requests.auth import HTTPBasicAuth
-                    # Build direct API call to get the private resource
-                    api_url = f"https://{self.api_key}:{self.api_secret}@api.cloudinary.com/v1_1/{self.cloud_name}/resources/raw/upload/{public_id}"
-                    response = requests.get(api_url, timeout=30)
-                    response.raise_for_status()
-                except Exception as auth_error:
-                    print(f"[DEBUG] API auth attempt failed: {auth_error}", flush=True)
-                    # Last resort: try the plain CDN URL without auth
-                    from urllib.parse import quote
-                    encoded_public_id = quote(public_id, safe='/')
-                    plain_url = f"https://res.cloudinary.com/{self.cloud_name}/raw/upload/{encoded_public_id}"
-                    print(f"[DEBUG] Trying plain CDN URL: {plain_url}", flush=True)
-                    response = requests.get(plain_url, timeout=30)
-                    response.raise_for_status()
-            else:
-                response.raise_for_status()
-            
+
+            # Add cache-buster to force bypassing CDN/cache (helps when Render or other proxies serve stale/disabled assets)
+            try:
+                import time
+                cache_bust = str(int(time.time()))
+                if '?' in url:
+                    url = f"{url}&_={cache_bust}"
+                else:
+                    url = f"{url}?_={cache_bust}"
+                print(f"[DEBUG] CloudinaryStorage._open cache-busted URL: {url}", flush=True)
+            except Exception:
+                # if time fails for any reason, continue without cache-bust
+                pass
+
+            # Download using personal key credentials - NO FALLBACK TO SHARED KEY
+            headers = {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
+            response = requests.get(url, timeout=30, allow_redirects=True, headers=headers)
+            response.raise_for_status()
+
             content = response.content
-            print(f"[DEBUG] CloudinaryStorage._open downloaded {len(content)} bytes", flush=True)
+            print(f"[DEBUG] CloudinaryStorage._open downloaded {len(content)} bytes with personal key (cache bypass)", flush=True)
             return BytesIO(content)
         except Exception as e:
-            print(f"[ERROR] CloudinaryStorage._open failed: {e}", flush=True)
+            print(f"[ERROR] CloudinaryStorage._open failed with personal key (NO FALLBACK): {e}", flush=True)
             raise
 
     def delete(self, name):
