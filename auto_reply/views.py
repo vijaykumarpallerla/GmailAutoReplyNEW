@@ -9,18 +9,13 @@ from django.contrib.auth.models import User
 from django.contrib.auth.forms import UserCreationForm
 
 import json
-from django.contrib.auth import login as auth_login
 import sys
 import os
-from django.core.files.storage import storages
-from django.core.files.base import ContentFile
 from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from django.utils import timezone
+from django.core.cache import cache
 from datetime import timedelta
-
-# Get the configured default storage backend
-default_storage = storages['default']
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
@@ -35,16 +30,18 @@ from .gmail_service import gmail_pull_for_user
 
 @login_required
 def rule_create_ui(request):
-    # Render the rule editor with blank/default values for a new rule
-    class DummyRule:
-        rule_name = ''
-        workspace = ''
-        keywords = ''
-        reply_message = ''
-        file_id = ''
-        enabled = True
-        id = None
-    return render(request, 'rule_edit_ui.html', {'rule': DummyRule()})
+	# Render the rule editor with blank/default values for a new rule
+	class DummyRule:
+		rule_name = ''
+		workspace = ''
+		keywords = ''
+		reply_message = ''
+		file_id = ''
+		enabled = True
+		id = None
+	gmail_auth_issue = cache.get(f"gmail_auth_issue_{request.user.pk}")
+	return render(request, 'rule_edit_ui.html', {'rule': DummyRule(), 'gmail_auth_issue': bool(gmail_auth_issue)})
+
 
 @login_required
 def rule_edit_ui(request, rule_id):
@@ -69,36 +66,42 @@ def rule_edit_ui(request, rule_id):
 		for a in actions
 	])
 	print(f"[DEBUG] Serialized actions_json: {actions_json}", file=sys.stderr)
+	gmail_auth_issue = cache.get(f"gmail_auth_issue_{request.user.pk}")
 	return render(request, 'rule_edit_ui.html', {
 		'rule': rule,
 		'conditions': conditions,
 		'actions': actions,
 		'conditions_json': conditions_json,
-		'actions_json': actions_json
+		'actions_json': actions_json,
+		'gmail_auth_issue': bool(gmail_auth_issue),
 	})
+
 
 @login_required
 def rules_dashboard(request):
 	# Show Gmail connect status
 	from .models import GmailToken, ReplyLog
-	
+
 	# With single-step login, we assume connected, but let's just check if we have a token for UI feedback if needed.
 	# In the new flow, this should almost always be true after login.
 	token_exists = GmailToken.objects.filter(user=request.user).exists()
-	
+
 	# We can get the profile email from the user object directly now
 	gmail_profile = {'emailAddress': request.user.email}
-	
+
 	# Stats
 	today_count = ReplyLog.objects.filter(user=request.user, sent_at__date=timezone.now().date()).count()
 	total_count = ReplyLog.objects.filter(user=request.user).count()
-	
+
+	gmail_auth_issue = cache.get(f"gmail_auth_issue_{request.user.pk}")
 	return render(request, 'rules_dashboard.html', {
 		'gmail_connected': token_exists,
 		'gmail_profile': gmail_profile,
 		'today_count': today_count,
 		'total_count': total_count,
+		'gmail_auth_issue': bool(gmail_auth_issue),
 	})
+
 
 @login_required
 def rules_list(request):
@@ -214,9 +217,8 @@ def rule_create(request):
 		group_indices = sorted(set(group_indices))
 		print(f"[DEBUG] rule_create attachment group indices detected: {group_indices}", file=sys.stderr)
 		
-		# Set user-specific Cloudinary credentials before uploading
-		if hasattr(default_storage, 'set_user_credentials'):
-			default_storage.set_user_credentials(request.user)
+		# Store files directly in database (no external storage)
+		import base64
 		
 		for gi in group_indices:
 			label = request.POST.get(f'attachment_group_label_{gi}', '')
@@ -224,16 +226,16 @@ def rule_create(request):
 			print(f"[DEBUG] rule_create group {gi} files count: {len(files)}", file=sys.stderr)
 			for f in files:
 				print(f"[DEBUG] rule_create saving attachment group {gi} file {f.name} size={f.size}", file=sys.stderr)
-				# Store file in media under rule_attachments/<rule.id>/<action_idx>/
-				subdir = os.path.join('rule_attachments', str(rule.id), str(action_idx))
-				path = default_storage.save(os.path.join(subdir, f.name), ContentFile(f.read()))
+				# Read file and encode as base64 for database storage
+				file_content = f.read()
+				content_base64 = base64.b64encode(file_content).decode('utf-8')
 				attachments_meta.append({
 					'group': gi,
 					'label': label,
 					'name': f.name,
 					'size': f.size,
 					'content_type': f.content_type,
-					'path': path,
+					'content': content_base64,  # Store base64-encoded file in database
 				})
 		if attachments_meta:
 			ra.attachments = attachments_meta
@@ -314,19 +316,12 @@ def rule_edit(request, rule_id):
 		# Start with previously saved attachments for this action, excluding user-deleted ones
 		preserved = []
 		
-		# Set user-specific Cloudinary credentials before deleting attachments
-		if hasattr(default_storage, 'set_user_credentials'):
-			default_storage.set_user_credentials(request.user)
-		
+		# Files stored in database - just exclude deleted ones (no external cleanup needed)
 		for att in old_action_attachments.get(action_idx, []) or []:
 			try:
-				if att.get('path') in delete_paths:
-					print(f"[DEBUG] rule_edit deleting saved attachment path={att.get('path')} for action {action_idx}", file=sys.stderr)
-					try:
-						if att.get('path'):
-							default_storage.delete(att.get('path'))
-					except Exception as _e:
-						print(f"[DEBUG] rule_edit delete error for {att.get('path')}: {_e}", file=sys.stderr)
+				# Check if user requested deletion (by file name since no path anymore)
+				if att.get('name') in delete_paths or att.get('path') in delete_paths:
+					print(f"[DEBUG] rule_edit deleting saved attachment name={att.get('name')} for action {action_idx}", file=sys.stderr)
 					continue
 			except Exception:
 				pass
@@ -349,9 +344,8 @@ def rule_edit(request, rule_id):
 		group_indices = sorted(set(group_indices))
 		print(f"[DEBUG] rule_edit attachment group indices detected: {group_indices}", file=sys.stderr)
 		
-		# Set user-specific Cloudinary credentials before uploading
-		if hasattr(default_storage, 'set_user_credentials'):
-			default_storage.set_user_credentials(request.user)
+		# Store files directly in database (no external storage)
+		import base64
 		
 		for gi in group_indices:
 			label = request.POST.get(f'attachment_group_label_{gi}', '')
@@ -359,15 +353,16 @@ def rule_edit(request, rule_id):
 			print(f"[DEBUG] rule_edit group {gi} files count: {len(files)}", file=sys.stderr)
 			for f in files:
 				print(f"[DEBUG] rule_edit saving attachment group {gi} file {f.name} size={f.size}", file=sys.stderr)
-				subdir = os.path.join('rule_attachments', str(rule.id), str(action_idx))
-				path = default_storage.save(os.path.join(subdir, f.name), ContentFile(f.read()))
+				# Read file and encode as base64 for database storage
+				file_content = f.read()
+				content_base64 = base64.b64encode(file_content).decode('utf-8')
 				attachments_meta.append({
 					'group': gi,
 					'label': label,
 					'name': f.name,
 					'size': f.size,
 					'content_type': f.content_type,
-					'path': path,
+					'content': content_base64,  # Store base64-encoded file in database
 				})
 		# Merge preserved and newly uploaded
 		combined_attachments = preserved + attachments_meta
@@ -577,25 +572,25 @@ def test_fire(request):
 		if signature_html:
 			html_body += f"<br><br>{signature_html}"
 
-		# Attach files from storage
+		# Attach files from database
 		attachments_meta = action.attachments or []
 		attached = []
-	
-		# Set user-specific Cloudinary credentials before downloading attachments
-		if hasattr(default_storage, 'set_user_credentials'):
-			default_storage.set_user_credentials(request.user)
+		import base64
 	
 		for att in attachments_meta:
 			try:
-				path = att.get('path')
 				name = att.get('name') or 'file'
 				ctype = att.get('content_type') or 'application/octet-stream'
-				if path and default_storage.exists(path):
-					with default_storage.open(path, 'rb') as fh:
-						content = fh.read()
-						attached.append((name, content, ctype))
+				content_base64 = att.get('content')
+				
+				if content_base64:
+					# Decode base64 content from database
+					content = base64.b64decode(content_base64)
+					attached.append((name, content, ctype))
+				else:
+					print(f"[DEBUG] test_fire attachment has no content: {name}", file=sys.stderr)
 			except Exception as _e:
-				print(f"[DEBUG] test_fire attachment load error for {att}: {_e}", file=sys.stderr)
+				print(f"[DEBUG] test_fire attachment load error for {att.get('name')}: {_e}", file=sys.stderr)
 
 		# Prepare response (and possible dedupe info)
 		resp = {
@@ -682,32 +677,3 @@ def test_fire(request):
 			return JsonResponse(resp, status=500)
 	except Exception as e:
 		return JsonResponse({'error': str(e)}, status=500)
-
-
-@login_required
-def cloudinary_api_key_view(request):
-	"""GET returns current key, POST saves new key for the logged-in user."""
-	try:
-		from .models import UserProfile
-		if request.method == 'GET':
-			try:
-				profile = getattr(request.user, 'profile', None)
-				api_key = (profile.cloudinary_api_key if profile else '') or ''
-				return JsonResponse({'status': 'success', 'api_key': api_key})
-			except Exception as e:
-				return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
-
-		if request.method == 'POST':
-			api_key = (request.POST.get('cloudinary_api_key') or '').strip()
-			if not api_key:
-				return JsonResponse({'status': 'error', 'message': 'API key cannot be empty'}, status=400)
-			profile, _ = UserProfile.objects.get_or_create(user=request.user)
-			profile.cloudinary_api_key = api_key
-			profile.save(update_fields=['cloudinary_api_key'])
-			return JsonResponse({'status': 'success', 'message': 'API key saved successfully'})
-
-		return JsonResponse({'status': 'error', 'message': 'Invalid method'}, status=400)
-	except Exception as e:
-		return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
-
-

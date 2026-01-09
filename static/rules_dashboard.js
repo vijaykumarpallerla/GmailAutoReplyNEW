@@ -1,9 +1,9 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     const rulesTableContainer = document.getElementById('rulesTableContainer');
     const addRuleBtn = document.getElementById('addRuleBtn');
 
     if (addRuleBtn) {
-        addRuleBtn.addEventListener('click', function() {
+        addRuleBtn.addEventListener('click', function () {
             window.location.href = '/rule/create-ui/';
         });
     }
@@ -29,11 +29,10 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         let html = '<table class="table"><thead><tr>' +
-            '<th>Name</th><th>Keywords</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+            '<th>Name</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
         for (const rule of rules) {
-            html += `<tr>
+            html += `<tr class="rule-row" data-id="${rule.id}" style="cursor: pointer;">
                 <td>${rule.rule_name}</td>
-                <td>${rule.keywords}</td>
                 <td>
                     <label class="toggle-switch">
                         <input type="checkbox" data-id="${rule.id}" class="toggle-enabled" ${rule.enabled ? 'checked' : ''}>
@@ -53,21 +52,40 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
     function attachTableEvents() {
-        document.querySelectorAll('.toggle-enabled').forEach(el => {
-            el.addEventListener('change', function() {
-                fetch(`/rule/${el.dataset.id}/toggle/`, {method: 'POST', headers: {'X-CSRFToken': getCookie('csrftoken')}})
-                    .then(() => fetchRules());
-            });
-        });
-        document.querySelectorAll('.edit-btn').forEach(el => {
-            el.addEventListener('click', function() {
+        // Row Click
+        document.querySelectorAll('.rule-row').forEach(el => {
+            el.addEventListener('click', function (e) {
+                // Prevent navigation if text was selected
+                if (window.getSelection().toString().length > 0) return;
                 window.location.href = `/rule/${el.dataset.id}/edit-ui/`;
             });
         });
+
+        // Toggle Switch
+        document.querySelectorAll('.toggle-enabled').forEach(el => {
+            el.addEventListener('click', function (e) {
+                e.stopPropagation(); // Prevent row click
+            });
+            el.addEventListener('change', function (e) {
+                fetch(`/rule/${el.dataset.id}/toggle/`, { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') } })
+                    .then(() => fetchRules());
+            });
+        });
+
+        // Edit Button (Redundant with row click, but keep for explicit action)
+        document.querySelectorAll('.edit-btn').forEach(el => {
+            el.addEventListener('click', function (e) {
+                e.stopPropagation();
+                window.location.href = `/rule/${el.dataset.id}/edit-ui/`;
+            });
+        });
+
+        // Delete Button
         document.querySelectorAll('.delete-btn').forEach(el => {
-            el.addEventListener('click', function() {
+            el.addEventListener('click', function (e) {
+                e.stopPropagation(); // Prevent row click
                 if (confirm('Delete this rule?')) {
-                    fetch(`/rule/${el.dataset.id}/delete/`, {method: 'POST', headers: {'X-CSRFToken': getCookie('csrftoken')}})
+                    fetch(`/rule/${el.dataset.id}/delete/`, { method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') } })
                         .then(() => fetchRules());
                 }
             });

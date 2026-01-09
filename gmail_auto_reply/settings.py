@@ -210,30 +210,15 @@ else:
     MEDIA_ROOT = BASE_DIR / 'media'
 MEDIA_URL = '/media/'
 
-# Cloudinary Storage (optional). Set CLOUDINARY_URL env var to enable cloud storage.
-if os.environ.get('CLOUDINARY_URL'):
-    import cloudinary
-    cloudinary.config(url=os.environ.get('CLOUDINARY_URL'))
-    # Use Django 4.2+ STORAGES setting instead of deprecated DEFAULT_FILE_STORAGE
-    STORAGES = {
-        "default": {
-            "BACKEND": "auto_reply.cloudinary_storage.CloudinaryStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
-    }
-    MEDIA_URL = 'https://res.cloudinary.com/{}/image/upload/'.format(os.environ.get('CLOUDINARY_CLOUD_NAME', ''))
-else:
-    # Use default file system storage
-    STORAGES = {
-        "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
-    }
+# File storage (attachments stored in database as base64, no external storage needed)
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
